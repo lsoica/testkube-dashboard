@@ -1,0 +1,121 @@
+---
+apiVersion: executor.testkube.io/v1
+kind: Executor
+metadata:
+  name: bash
+spec:
+  types:
+  - bash/test
+  executor_type: container
+  image: a.com/image:1.0.0
+  command: ["/bin/bash"]
+  features:
+    - artifacts
+---
+apiVersion: tests.testkube.io/v3
+kind: TestSuite
+metadata:
+  name: indigoctl-online-ocp-internal-git-windows
+  labels:
+    executor: bash
+    test-type: bash-test
+spec:
+  schedule: "0 2 * * *"
+  steps:
+  - stopOnFailure: true
+    execute:
+    - test: windows-pod-create.sh
+      executionRequest:
+        variables:
+          POD_NAME:
+            name: POD_NAME
+            type: basic
+            value: "windows-execution-pod"
+          NAMESPACE:
+            name: NAMESPACE
+            type: basic
+            value: "sentinel"
+  - stopOnFailure: false
+    execute:
+    - test: vcluster-create.sh
+      executionRequest:
+        variables:
+          CLUSTER_NAME:
+            name: CLUSTER_NAME
+            type: basic
+            value: "ocp-windows"
+  - stopOnFailure: false
+    execute:
+    - test: windows-pod-install-tools.sh
+      executionRequest:
+        variables:
+          POD_NAME:
+            name: POD_NAME
+            type: basic
+            value: "windows-execution-pod"
+          NAMESPACE:
+            name: NAMESPACE
+            type: basic
+            value: "sentinel"
+  - stopOnFailure: false
+    execute:
+    - test: windows-pod-ocp-online-init.sh
+      executionRequest:
+        variables:
+          POD_NAME:
+            name: POD_NAME
+            type: basic
+            value: "windows-execution-pod"
+          NAMESPACE:
+            name: NAMESPACE
+            type: basic
+            value: "sentinel"
+  - stopOnFailure: false
+    execute:
+    - test: windows-pod-ocp-online-sync.sh
+      executionRequest:
+        variables:
+          POD_NAME:
+            name: POD_NAME
+            type: basic
+            value: "windows-execution-pod"
+          NAMESPACE:
+            name: NAMESPACE
+            type: basic
+            value: "sentinel"
+  - stopOnFailure: false
+    execute:
+    - test: windows-pod-ocp-online-destroy.sh
+      executionRequest:
+        variables:
+          POD_NAME:
+            name: POD_NAME
+            type: basic
+            value: "windows-execution-pod"
+          NAMESPACE:
+            name: NAMESPACE
+            type: basic
+            value: "sentinel"
+  - stopOnFailure: false
+    execute:
+    - test: windows-pod-delete.sh
+      executionRequest:
+        variables:
+          POD_NAME:
+            name: POD_NAME
+            type: basic
+            value: "windows-execution-pod"
+          NAMESPACE:
+            name: NAMESPACE
+            type: basic
+            value: "sentinel"
+  - stopOnFailure: true
+    execute:
+    - test: vcluster-delete.sh
+      executionRequest:
+        variables:
+          CLUSTER_NAME:
+            name: CLUSTER_NAME
+            type: basic
+            value: "ocp-windows"
+

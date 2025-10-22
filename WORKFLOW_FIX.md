@@ -4,19 +4,32 @@
 The workflows page was showing up in the navigation but wasn't listing any workflows, even when workflows existed in Testkube.
 
 ## Root Cause
-**The API URL was never being initialized on application startup.**
+**Two issues were discovered:**
 
-The OpenAPI client (`lib/api/generated`) requires the base URL to be configured before making any API calls. However, the `configureAPI()` function was only being called when users manually saved settings in the Settings page.
+1. **Missing API initialization**: The OpenAPI client requires `configureAPI()` to be called before making API calls, but it was only being called when users manually saved settings.
 
-This meant:
-- On first load, all API calls would fail silently
-- The workflows endpoint (`GET /test-workflows`) was never actually being called
-- No error messages were shown to users
+2. **Incorrect API URL**: The Testkube agent API is at `http://localhost:8088/v1`, not `http://localhost:8088`. The missing `/v1` path was causing all API calls to fail.
 
-## Files Changed
+## Solution
 
-### 1. `/lib/providers/query-provider.tsx`
-**Added API initialization on mount:**
+### 1. Fix API URL Default
+**File**: `lib/api/config.ts`
+
+Changed default URL from `http://localhost:8088` to `http://localhost:8088/v1`:
+```typescript
+export const getAPIBaseUrl = (): string => {
+  if (typeof window !== 'undefined') {
+    const stored = localStorage.getItem('testkube_agent_url');
+    if (stored) return stored;
+  }
+  return process.env.NEXT_PUBLIC_AGENT_URL || 'http://localhost:8088/v1';
+};
+```
+
+### 2. Initialize API on Application Start
+**File**: `lib/providers/query-provider.tsx`
+
+Added automatic API initialization:
 ```typescript
 useEffect(() => {
   const apiUrl = getAPIBaseUrl();
@@ -25,20 +38,23 @@ useEffect(() => {
 }, []);
 ```
 
-This ensures the API client is configured with the correct base URL (from localStorage or default) before any React Query hooks execute.
+This ensures the API client is configured before any React Query hooks execute.
 
-### 2. `/app/workflows/page.tsx`
-**Added error state handling:**
-- Destructured `error` and `isError` from `useWorkflows()` hook
-- Added error UI showing connection issues
-- Provides helpful message directing users to check Settings
-- Shows actual error message for debugging
+### 3. Add Error Handling
+**File**: `app/workflows/page.tsx`
 
-### 3. `/lib/hooks/use-workflows.ts`
-**Added debug logging:**
+Added error state handling:
+- Shows clear error messages when API calls fail
+- Provides link to Settings page
+- Displays actual error for debugging
+
+### 4. Add Debug Logging
+**File**: `lib/hooks/use-workflows.ts`
+
+Added console logging:
 - Logs when workflow fetch is initiated
-- Logs successful fetches with workflow count
-- Logs detailed error information to console
+- Logs successful fetches with count
+- Logs detailed error information
 
 ## How to Test
 

@@ -77,7 +77,19 @@ export function useWorkflowExecution(workflowName: string, executionId: string) 
 
 export function useWorkflowExecutionsList(pageSize = 100) {
   return useQuery({
-    queryKey: ['workflow-executions', pageSize],
-    queryFn: () => DefaultService.listTestWorkflowExecutions('', pageSize.toString()),
+    queryKey: ['workflow-executions-list', pageSize],
+    queryFn: async () => {
+      console.log('[Testkube] Fetching all workflow executions');
+      try {
+        // The API requires an id but for getting all executions we pass empty string
+        // The second parameter is tagSelector, not pageSize
+        const result = await DefaultService.listTestWorkflowExecutions('');
+        console.log('[Testkube] Workflow executions response:', result);
+        return result;
+      } catch (error) {
+        console.error('[Testkube] Failed to fetch workflow executions:', error);
+        throw error;
+      }
+    },
   });
 }

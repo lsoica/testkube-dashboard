@@ -93,15 +93,9 @@ export default function SettingsPage() {
             <h3 className="text-sm font-medium mb-2">Current Configuration</h3>
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">Agent URL</span>
+                <span className="text-sm text-muted-foreground">Agent API URL</span>
                 <code className="text-xs bg-muted px-2 py-1 rounded">
                   {getAPIBaseUrl()}
-                </code>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">API Proxy</span>
-                <code className="text-xs bg-muted px-2 py-1 rounded">
-                  /api/proxy
                 </code>
               </div>
               <div className="flex items-center justify-between">

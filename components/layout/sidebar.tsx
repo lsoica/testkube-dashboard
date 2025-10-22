@@ -4,16 +4,10 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard,
-  FlaskConical,
-  FolderTree,
-  PlayCircle,
-  Webhook,
   Settings,
-  Cog,
-  FileCode,
-  Zap,
   Workflow,
   GitBranch,
+  FileCode,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -21,15 +15,9 @@ import { Separator } from '@/components/ui/separator';
 
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
-  { name: 'Tests', href: '/tests', icon: FlaskConical },
-  { name: 'Test Suites', href: '/test-suites', icon: FolderTree },
   { name: 'Workflows', href: '/workflows', icon: Workflow },
-  { name: 'Executions', href: '/executions', icon: PlayCircle },
   { name: 'Workflow Executions', href: '/workflow-executions', icon: GitBranch },
-  { name: 'Webhooks', href: '/webhooks', icon: Webhook },
-  { name: 'Executors', href: '/executors', icon: Cog },
-  { name: 'Test Sources', href: '/test-sources', icon: FileCode },
-  { name: 'Triggers', href: '/triggers', icon: Zap },
+  { name: 'Workflow Templates', href: '/workflow-templates', icon: FileCode },
   { name: 'Settings', href: '/settings', icon: Settings },
 ];
 
@@ -40,7 +28,7 @@ export function Sidebar() {
     <div className="flex h-full w-64 flex-col border-r bg-gray-50/50">
       <div className="flex h-16 items-center border-b px-6">
         <Link href="/" className="flex items-center gap-2 font-bold text-xl">
-          <FlaskConical className="h-6 w-6 text-primary" />
+          <Workflow className="h-6 w-6 text-primary" />
           <span>Testkube</span>
         </Link>
       </div>

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import * as React from 'react';
 import { useWorkflowExecutionsList } from '@/lib/hooks/use-workflows';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -30,10 +31,29 @@ export default function WorkflowExecutionsPage() {
   const [search, setSearch] = useState('');
   const { data: executionsData, isLoading, error, isError } = useWorkflowExecutionsList(100);
 
-  // Handle both array and object responses
-  const executions = Array.isArray(executionsData)
-    ? executionsData
-    : (executionsData as any)?.results || [];
+  // The API returns Array<TestWorkflowExecutionsResult>, each with a results array
+  // We need to flatten them or take the first one
+  const executions = React.useMemo(() => {
+    if (!executionsData) return [];
+
+    // If it's an array of result objects, flatten all results
+    if (Array.isArray(executionsData)) {
+      // Check if first item has a results property
+      if (executionsData.length > 0 && executionsData[0]?.results) {
+        // Flatten all results arrays
+        return executionsData.flatMap((resultObj: any) => resultObj.results || []);
+      }
+      // Otherwise it's already a flat array
+      return executionsData;
+    }
+
+    // If it's a single result object
+    if ((executionsData as any)?.results) {
+      return (executionsData as any).results;
+    }
+
+    return [];
+  }, [executionsData]);
 
   const filteredExecutions = executions.filter((execution: any) =>
     execution.workflow?.name?.toLowerCase().includes(search.toLowerCase()) ||

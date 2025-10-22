@@ -1,34 +1,44 @@
+kind: TestWorkflowTemplate
+apiVersion: testworkflows.testkube.io/v1
+metadata:
+  name: container-executor-k6-0.43.1
+  namespace: testkube
+spec:
+  container:
+    image: grafana/k6:0.43.1
+  pod: {}
+
+---
+
 kind: TestWorkflow
 apiVersion: testworkflows.testkube.io/v1
 metadata:
-  name: k6-sample
+  name: container-executor-k6-smoke
   namespace: testkube
   labels:
-    docs: example
+    core-tests: executors
+    executor: container-executor-k6-0.43.1
+    test-type: container-executor-k6-0-43-1-test
 spec:
+  use:
+  - name: container-executor-k6-0.43.1
   content:
-    files:
-    - path: /data/example.js
-      content: |-
-        import http from 'k6/http';
-        import { sleep } from 'k6';
-        export default function () {
-            http.get('https://test.k6.io');
-            sleep(1);
-        };
+    git:
+      uri: https://github.com/kubeshop/testkube
+      revision: main
+      paths:
+      - test/k6/k6-smoke-test-without-envs.js
+  container:
+    workingDir: /data/repo/test/k6
+  job:
+    labels:
+      core-tests: executors
+      executor: container-executor-k6-0.43.1
+      test-type: container-executor-k6-0-43-1-test
+    activeDeadlineSeconds: 180
   steps:
-    - name: Run Tests
-      workingDir: /data
-      run:
-        image: grafana/k6:0.49.0
-        env:
-          - name: K6_WEB_DASHBOARD
-            value: "true"
-          - name: K6_WEB_DASHBOARD_EXPORT
-            value: k6-test-report.html
-        args:
-          - run
-          - example.js
-      artifacts:
-        paths:
-          - k6-test-report.html
+  - name: Run tests
+    run:
+      args:
+      - run
+      - k6-smoke-test-without-envs.js
