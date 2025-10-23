@@ -3,7 +3,9 @@
 import { useState } from 'react';
 import * as React from 'react';
 import { useParams } from 'next/navigation';
-import { useWorkflowExecution } from '@/lib/hooks/use-workflows';
+import { useWorkflowExecution, useWorkflowExecutionLogs, useWorkflowExecutionLogsByStep } from '@/lib/hooks/use-workflows';
+import type { TestWorkflowSignature } from '@/lib/api/generated/models/TestWorkflowSignature';
+import type { WorkflowLogEntry } from '@/lib/api/workflow-logs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -35,16 +37,154 @@ export default function WorkflowExecutionDetailPage() {
 
   const { data: execution, isLoading, isError, error, refetch } = useWorkflowExecution(workflowName, executionId);
 
-  // Auto-refresh every 3 seconds if execution is running
+  // Build step info with both ref and name for log fetching
+  const stepInfo = React.useMemo(() => {
+    if (!execution?.result?.steps || !execution?.signature) return [];
+
+    // First build the signature map
+    const sigMap = new Map<string, { name?: string; category?: string }>();
+    const flattenSig = (sigs: any[] | undefined) => {
+      if (!sigs) return;
+      for (const sig of sigs) {
+        if (sig.ref) {
+          sigMap.set(sig.ref, { name: sig.name, category: sig.category });
+        }
+        if (sig.children) flattenSig(sig.children);
+      }
+    };
+    flattenSig(execution.signature);
+
+    // Create array with ref and name
+    return Object.keys(execution.result.steps).map(ref => {
+      const sig = sigMap.get(ref);
+      return {
+        ref,
+        name: sig?.name || sig?.category || ref,
+      };
+    });
+  }, [execution?.result?.steps, execution?.signature]);
+
+  const status = execution?.result?.status || 'unknown';
+  const duration = execution?.result?.duration || '-';
+  const isRunning = status === 'running' || status === 'queued';
+
+  // Fetch logs for all steps using step names (with follow=true if running)
+  const {
+    data: logsByStepMap,
+    isLoading: logsLoading,
+    isError: logsError,
+    error: logsErrorObj,
+  } = useWorkflowExecutionLogsByStep(workflowName, executionId, stepInfo, isRunning);
+
+  // Fetch aggregated logs for the whole execution (with follow=true if running)
+  const {
+    data: aggregatedLogs,
+  } = useWorkflowExecutionLogs(workflowName, executionId, isRunning);
+
+  // Build signature map and order list from the signature tree
+  const { signatureMap, signatureOrder } = React.useMemo(() => {
+    const map = new Map<string, { name?: string; category?: string }>();
+    const order: string[] = [];
+
+    const flattenSignature = (signatures: TestWorkflowSignature[] | undefined) => {
+      if (!signatures) return;
+
+      for (const sig of signatures) {
+        if (sig.ref) {
+          map.set(sig.ref, {
+            name: sig.name,
+            category: sig.category,
+          });
+          order.push(sig.ref); // Track order
+        }
+        // Recursively process children (maintains order)
+        if (sig.children) {
+          flattenSignature(sig.children);
+        }
+      }
+    };
+
+    flattenSignature(execution?.signature);
+    console.log('[Execution Page] Signature map built:', Array.from(map.entries()));
+    console.log('[Execution Page] Signature order:', order);
+    return { signatureMap: map, signatureOrder: order };
+  }, [execution?.signature]);
+
+  // Logs are already grouped by step from the API
+  const logsByStep = React.useMemo(
+    () => logsByStepMap || new Map<string, WorkflowLogEntry[]>(),
+    [logsByStepMap]
+  );
+
+  // Convert steps Record to Array with proper names from signature, sorted by signature order
+  const steps = React.useMemo(() => {
+    if (!execution?.result?.steps) return [];
+
+    // Create array of steps with metadata
+    const stepsArray = Object.entries(execution.result.steps).map(([ref, stepResult]) => {
+      const sigInfo = signatureMap.get(ref);
+      return {
+        ref,
+        name: sigInfo?.name || sigInfo?.category || ref,
+        category: sigInfo?.category,
+        ...stepResult,
+      };
+    });
+
+    // Sort by signature order
+    stepsArray.sort((a, b) => {
+      const indexA = signatureOrder.indexOf(a.ref);
+      const indexB = signatureOrder.indexOf(b.ref);
+
+      // If both found in order, sort by index
+      if (indexA !== -1 && indexB !== -1) {
+        return indexA - indexB;
+      }
+      // If only A found, put it first
+      if (indexA !== -1) return -1;
+      // If only B found, put it first
+      if (indexB !== -1) return 1;
+      // If neither found, maintain current order
+      return 0;
+    });
+
+    console.log('[Execution Page] Steps sorted by signature order:', stepsArray.map(s => s.ref));
+    return stepsArray;
+  }, [execution?.result?.steps, signatureMap, signatureOrder]);
+
+  // Debug logging
   React.useEffect(() => {
-    const isRunning = execution?.result?.status === 'running' || execution?.result?.status === 'queued';
+    if (execution) {
+      console.log('[Execution Page] Execution data:', {
+        id: execution.id,
+        status: execution.result?.status,
+        steps: execution.result?.steps,
+        stepsType: typeof execution.result?.steps,
+        stepsKeys: execution.result?.steps ? Object.keys(execution.result.steps) : [],
+        signature: execution.signature,
+        output: execution.output,
+      });
+    }
+  }, [execution]);
+
+  // Debug logs
+  React.useEffect(() => {
+    console.log('[Execution Page] Logs by step:', {
+      stepsWithLogs: Array.from(logsByStep.keys()),
+      totalSteps: logsByStep.size,
+      executionId,
+    });
+  }, [logsByStep, executionId]);
+
+  // Auto-refresh execution status every 2 seconds if running
+  React.useEffect(() => {
     if (!isRunning) return;
 
     const interval = setInterval(() => {
-      refetch();
-    }, 3000);
+      refetch(); // Only refetch execution status, logs have auto-refresh built-in
+    }, 2000);
     return () => clearInterval(interval);
-  }, [execution?.result?.status, refetch]);
+  }, [isRunning, refetch]);
 
   if (isError) {
     return (
@@ -75,11 +215,6 @@ export default function WorkflowExecutionDetailPage() {
       </div>
     );
   }
-
-  const status = execution?.result?.status || 'unknown';
-  const duration = execution?.result?.duration || 0;
-  const steps = Array.isArray(execution?.result?.steps) ? execution.result.steps : [];
-  const isRunning = status === 'running' || status === 'queued';
 
   return (
     <div className="space-y-6">
@@ -168,6 +303,61 @@ export default function WorkflowExecutionDetailPage() {
         </Card>
       </div>
 
+      {/* Debug Info for Logs */}
+      <Card className="border-blue-200 bg-blue-50">
+        <CardHeader>
+          <CardTitle className="text-sm text-blue-800">📊 Logs Debug Info</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-2 text-xs text-blue-700">
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <span className="font-semibold">Workflow:</span>
+                <p className="font-mono text-xs break-all">{workflowName}</p>
+              </div>
+              <div>
+                <span className="font-semibold">Execution ID:</span>
+                <p className="font-mono text-xs break-all">{executionId}</p>
+              </div>
+            </div>
+            <div>
+              <div>
+                <span className="font-semibold">Logs API Endpoint:</span>
+                <p className="font-mono text-xs break-all">
+                  /v1/test-workflows/{workflowName}/executions/{executionId}/logs
+                </p>
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <div>
+                <span className="font-semibold">Loading:</span> {logsLoading ? '🔄 Yes' : '✅ No'}
+              </div>
+              <div>
+                <span className="font-semibold">Error:</span> {logsError ? '❌ Yes' : '✅ No'}
+              </div>
+              <div>
+                <span className="font-semibold">Steps w/ Logs:</span> {logsByStep.size}
+              </div>
+            </div>
+            {logsError && (
+              <div className="mt-2 p-2 bg-red-100 rounded border border-red-300">
+                <p className="text-red-800 font-semibold">Error Details:</p>
+                <p className="text-red-700">{logsErrorObj instanceof Error ? logsErrorObj.message : 'Unknown error'}</p>
+              </div>
+            )}
+            <div>
+              <span className="font-semibold">Steps with Logs:</span>
+              <p className="font-mono">{Array.from(logsByStep.keys()).join(', ') || 'None'}</p>
+            </div>
+            <div className="mt-2 p-2 bg-yellow-100 rounded border border-yellow-300">
+              <p className="text-yellow-800 text-xs">
+                💡 <strong>Check Browser Console (F12)</strong> for detailed log fetch information
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Execution Steps with Expandable Logs */}
       <Card>
         <CardHeader>
@@ -179,13 +369,29 @@ export default function WorkflowExecutionDetailPage() {
         <CardContent>
           {steps.length > 0 ? (
             <div className="space-y-2">
-              {steps.map((step: any, index: number) => (
-                <StepCollapsible
-                  key={index}
-                  step={step}
-                  index={index}
-                />
-              ))}
+              {steps.map((step: any, index: number) => {
+                // Get logs for this step
+                const stepLogs = logsByStep.get(step.ref) || [];
+
+                // Debug: log what we're passing
+                if (index === 0) {
+                  console.log('[Execution Page] Mapping first step:', {
+                    ref: step.ref,
+                    logsCount: stepLogs.length,
+                    logsByStepKeys: Array.from(logsByStep.keys()),
+                    sampleLog: stepLogs[0],
+                  });
+                }
+
+                return (
+                  <StepCollapsible
+                    key={step.ref || index}
+                    step={step}
+                    index={index}
+                    logs={stepLogs}
+                  />
+                );
+              })}
             </div>
           ) : (
             <div className="text-center py-12 text-muted-foreground">
@@ -197,24 +403,61 @@ export default function WorkflowExecutionDetailPage() {
         </CardContent>
       </Card>
 
-      {/* Full Output */}
-      {execution?.output && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Full Execution Output</CardTitle>
-            <CardDescription>
-              Complete logs from the workflow execution
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <pre className="bg-gray-950 text-gray-100 p-4 rounded-lg overflow-x-auto text-xs font-mono max-h-[600px] overflow-y-auto">
-              {typeof execution.output === 'string'
-                ? execution.output
-                : JSON.stringify(execution.output, null, 2)}
-            </pre>
-          </CardContent>
-        </Card>
-      )}
+      {/* Aggregated Logs */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Aggregated Execution Logs</CardTitle>
+              <CardDescription>
+                Complete logs from all steps in the workflow execution
+              </CardDescription>
+            </div>
+            {isRunning && aggregatedLogs && aggregatedLogs.length > 0 && (
+              <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+                <Clock className="mr-1 h-3 w-3 animate-pulse" />
+                Live Streaming
+              </Badge>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent>
+          {aggregatedLogs && aggregatedLogs.length > 0 ? (
+            <div className="bg-gray-950 text-gray-100 p-4 rounded-lg overflow-x-auto text-xs font-mono max-h-[600px] overflow-y-auto">
+              {aggregatedLogs.map((log, index) => (
+                <div key={index} className="py-0.5">
+                  {log.time && (
+                    <span className="text-gray-500">
+                      [{new Date(log.time).toLocaleTimeString()}]{' '}
+                    </span>
+                  )}
+                  {log.ref && (
+                    <span className="text-blue-400">
+                      [{log.ref}]{' '}
+                    </span>
+                  )}
+                  <span className={log.error ? 'text-red-400' : 'text-gray-100'}>
+                    {log.content || ''}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="bg-gray-950 text-gray-100 p-4 rounded text-xs font-mono">
+              <p className="text-gray-400">
+                {isRunning
+                  ? '# Waiting for aggregated logs...'
+                  : '# No aggregated logs available for this execution'}
+              </p>
+            </div>
+          )}
+          {aggregatedLogs && aggregatedLogs.length > 0 && (
+            <p className="text-xs text-muted-foreground mt-2">
+              Total log entries: {aggregatedLogs.length}
+            </p>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -222,13 +465,37 @@ export default function WorkflowExecutionDetailPage() {
 function StepCollapsible({
   step,
   index,
+  logs,
 }: {
   step: any;
   index: number;
+  logs: WorkflowLogEntry[];
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const status = step.status || 'unknown';
-  const hasError = step.errorMessage || step.exitCode !== 0;
+  const hasError = step.errorMessage || (step.exitCode !== undefined && step.exitCode !== 0);
+  const isStepRunning = status === 'running' || status === 'queued';
+
+  // Debug logging
+  React.useEffect(() => {
+    console.log(`[Step ${step.ref}] Received ${logs.length} log entries`);
+    if (logs.length > 0) {
+      console.log(`[Step ${step.ref}] Sample log:`, logs[0]);
+    }
+  }, [step.ref, logs]);
+
+  // Calculate duration if we have startedAt and finishedAt
+  const duration = React.useMemo(() => {
+    if (!step.startedAt || !step.finishedAt) return null;
+    const start = new Date(step.startedAt).getTime();
+    const finish = new Date(step.finishedAt).getTime();
+    const durationMs = finish - start;
+    const seconds = Math.floor(durationMs / 1000);
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    return `${minutes}m ${remainingSeconds}s`;
+  }, [step.startedAt, step.finishedAt]);
 
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>
@@ -252,7 +519,7 @@ function StepCollapsible({
               <p className="font-medium">{step.name || `Step ${index + 1}`}</p>
             </div>
             <div className="flex items-center gap-4 text-xs text-muted-foreground">
-              {step.duration && <span>Duration: {step.duration}</span>}
+              {duration && <span>Duration: {duration}</span>}
               {step.exitCode !== undefined && (
                 <span className={step.exitCode === 0 ? 'text-green-600' : 'text-red-600'}>
                   Exit code: {step.exitCode}
@@ -311,17 +578,44 @@ function StepCollapsible({
             </div>
           )}
 
-          {/* Step Logs Placeholder */}
+          {/* Step Logs */}
           <div>
-            <p className="text-sm text-muted-foreground mb-2">Step Logs</p>
-            <div className="bg-gray-950 text-gray-100 p-3 rounded text-xs font-mono">
-              <p className="text-gray-400">
-                # Logs for step: {step.name || `step-${index + 1}`}
-              </p>
-              <p className="text-gray-400">
-                # Check the Full Execution Output section below for complete logs
-              </p>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm text-muted-foreground">Step Logs</p>
+              {isStepRunning && logs.length > 0 && (
+                <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
+                  <Clock className="mr-1 h-3 w-3 animate-pulse" />
+                  Streaming
+                </Badge>
+              )}
+              {logs.length > 0 && (
+                <span className="text-xs text-muted-foreground">{logs.length} log entries</span>
+              )}
             </div>
+            {logs.length > 0 ? (
+              <div className="bg-gray-950 text-gray-100 p-3 rounded text-xs font-mono max-h-[400px] overflow-y-auto">
+                {logs.map((log, logIndex) => (
+                  <div key={logIndex} className="py-0.5">
+                    {log.time && (
+                      <span className="text-gray-500">
+                        [{new Date(log.time).toLocaleTimeString()}]{' '}
+                      </span>
+                    )}
+                    <span className={log.error ? 'text-red-400' : 'text-gray-100'}>
+                      {log.content || ''}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="bg-gray-950 text-gray-100 p-3 rounded text-xs font-mono">
+                <p className="text-gray-400">
+                  {isStepRunning
+                    ? '# Waiting for logs...'
+                    : '# No logs available for this step'}
+                </p>
+              </div>
+            )}
           </div>
         </div>
       </CollapsibleContent>

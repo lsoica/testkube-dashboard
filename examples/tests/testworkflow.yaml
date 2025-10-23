@@ -1,44 +1,129 @@
-kind: TestWorkflowTemplate
 apiVersion: testworkflows.testkube.io/v1
-metadata:
-  name: container-executor-k6-0.43.1
-  namespace: testkube
-spec:
-  container:
-    image: grafana/k6:0.43.1
-  pod: {}
-
----
-
 kind: TestWorkflow
-apiVersion: testworkflows.testkube.io/v1
 metadata:
-  name: container-executor-k6-smoke
+  name: indigoctl-online-thirdparty-remote-git
   namespace: testkube
   labels:
-    core-tests: executors
-    executor: container-executor-k6-0.43.1
-    test-type: container-executor-k6-0-43-1-test
+    executor: bash
+    test-type: bash-test
 spec:
-  use:
-  - name: container-executor-k6-0.43.1
+  # Schedule: every day at 02:00 Europe/Bucharest
+  events:
+    - cronjob:
+        cron: "0 2 * * *"
+        timezone: "Europe/Bucharest"
+
+  # Pull the same repository you used via TestSource
   content:
     git:
-      uri: https://github.com/kubeshop/testkube
+      uri: https://git.spirenteng.com/indigo-platform/indigo-sentinel.git
       revision: main
       paths:
-      - test/k6/k6-smoke-test-without-envs.js
+        - indigo-sentinel/tests/bash
+      usernameFrom:
+        secretKeyRef:
+          name: indigo-tests-source-secrets
+          key: git-username                               # <-- change if your key name differs
+      tokenFrom:
+        secretKeyRef:
+          name: indigo-tests-source-secrets
+          key: git-token                                  # <-- change if your key name differs
+
+  # Global container defaults for all steps
   container:
-    workingDir: /data/repo/test/k6
-  job:
-    labels:
-      core-tests: executors
-      executor: container-executor-k6-0.43.1
-      test-type: container-executor-k6-0-43-1-test
-    activeDeadlineSeconds: 180
+    image: artifactory-ito.spirenteng.com/indigo-docker-dev/indigo-development-platform/coder-indigoctl:1.0.12
+    workingDir: /data/repo
+    env:
+      # INDIGO-related secrets from 'indigo-tests-source-secrets'
+      - name: INDIGOCTL_PROJECT_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: indigo-tests-source-secrets
+            key: indigoctl-project-token
+      - name: INDIGO_STORE_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: indigo-tests-source-secrets
+            key: indigo-store-token
+      - name: INDIGO_STORE_USERNAME
+        valueFrom:
+          secretKeyRef:
+            name: indigo-tests-source-secrets
+            key: indigo-store-username
+      - name: INDIGO_STORE_TEMPLATE_REPOSITORY
+        valueFrom:
+          secretKeyRef:
+            name: indigo-tests-source-secrets
+            key: indigo-store-template-repository
+      - name: INDIGO_STORE_TEMPLATE_REGISTRY
+        valueFrom:
+          secretKeyRef:
+            name: indigo-tests-source-secrets
+            key: indigo-store-template-registry
+
+      # Nessus creds from 'nessus-secret'
+      - name: NESSUS_USERNAME
+        valueFrom:
+          secretKeyRef:
+            name: nessus-secret
+            key: username                                  # <-- change to your actual key if different
+      - name: NESSUS_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: nessus-secret
+            key: password                                  # <-- change to your actual key if different
+
+
+    # Mount a PVC for artifacts (auto-cleaned after execution)
+    volumeMounts:
+      - name: artifacts
+        mountPath: /artifacts
+
+  # Define a PVC and mount it on the Pod
+  pvcs:
+    artifacts:
+      # storageClassName: standard                        # <-- uncomment & set if you need a specific class
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 5Gi
+
+  pod:
+    volumes:
+      - name: artifacts
+        persistentVolumeClaim:
+          claimName: "{{ pvcs.artifacts.name }}"
+
   steps:
-  - name: Run tests
-    run:
-      args:
-      - run
-      - k6-smoke-test-without-envs.js
+    - name: vcluster-create
+      run:
+        env:
+          - name: CLUSTER_NAME
+            value: "customermanagedkubernetesonline"
+      shell: |
+        /bin/bash /data/repo/indigo-sentinel/tests/bash/vcluster-create.sh
+
+    - name: online-vcluster-init
+      condition: always
+      shell: |
+        /bin/bash /data/repo/indigo-sentinel/tests/bash/online-vcluster-init.sh
+
+    - name: online-vcluster-update-kubeconfig
+      condition: always
+      shell: |
+        /bin/bash /data/repo/indigo-sentinel/tests/bash/online-vcluster-update-kubeconfig.sh
+
+    - name: online-vcluster-destroy
+      condition: always
+      shell: |
+        /bin/bash /data/repo/indigo-sentinel/tests/bash/online-vcluster-destroy.sh
+
+    - name: vcluster-delete
+      condition: always
+      run:
+        env:
+          - name: CLUSTER_NAME
+            value: "customermanagedkubernetesonline"
+      shell: |
+        /bin/bash /data/repo/indigo-sentinel/tests/bash/vcluster-delete.sh
+
